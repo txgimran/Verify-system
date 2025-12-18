@@ -1,0 +1,118 @@
+<!DOCTYPE html><html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Prime Verification</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  min-height:100vh;
+  background:#000;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+}
+.panel{
+  width:100%;
+  max-width:380px;
+  background:linear-gradient(180deg,#0b0b0b,#000);
+  border-radius:24px;
+  padding:40px 28px 30px;
+  box-shadow:0 30px 80px rgba(0,0,0,.8);
+  color:#fff;
+  position:relative;
+}
+.panel::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  border-radius:24px;
+  padding:1px;
+  background:linear-gradient(135deg,#7c7cff,#a855f7,#22d3ee);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;
+          mask-composite:exclude;
+}
+.logo{
+  width:90px;height:90px;
+  border-radius:50%;
+  margin:0 auto 18px;
+  display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#7c7cff,#a855f7);
+  font-size:40px;
+}
+.title{text-align:center;font-size:24px;font-weight:800;letter-spacing:1px}
+.subtitle{text-align:center;font-size:13px;opacity:.7;margin-top:6px}
+.loader{margin:32px auto 18px;width:64px;height:64px;border-radius:50%;border:4px solid rgba(255,255,255,.1);border-top-color:#7c7cff;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.status{min-height:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.status i{font-size:56px;margin-bottom:14px;opacity:0;transform:scale(.6);transition:.4s}
+.status p{font-size:18px;font-weight:600;opacity:0;transform:translateY(8px);transition:.4s}
+.show i,.show p{opacity:1;transform:none}
+.ok{color:#22c55e}
+.warn{color:#facc15}
+.vpn{color:#ef4444}
+.err{color:#f87171}
+.btn-close{
+  margin-top:26px;
+  width:100%;
+  padding:14px 0;
+  border:none;
+  border-radius:14px;
+  font-size:16px;
+  font-weight:700;
+  color:#000;
+  background:linear-gradient(135deg,#7c7cff,#22d3ee);
+  cursor:pointer;
+  display:none;
+}
+.footer{text-align:center;margin-top:16px;font-size:12px;opacity:.5}
+</style>
+</head>
+<body>
+<div class="panel">
+  <div class="logo"><i class="fa-solid fa-shield-halved"></i></div>
+  <div class="title">PRIME VERIFY</div>
+  <div class="subtitle">Secure Telegram Verification</div>  <div class="loader" id="loader"></div>  <div class="status" id="status">
+    <i id="icon"></i>
+    <p id="msg"></p>
+  </div><button class="btn-close" id="closeBtn">CLOSE</button>
+
+  <div class="footer">Protected by Prime Security</div>
+</div><script>
+function show(type,text){
+  const icon=document.getElementById('icon');
+  const msg=document.getElementById('msg');
+  const box=document.getElementById('status');
+  const loader=document.getElementById('loader');
+  const btn=document.getElementById('closeBtn');
+  loader.style.display='none';
+  let cls='';
+  if(type==='verified'){icon.className='fa-solid fa-circle-check ok';cls='ok'}
+  if(type==='same'){icon.className='fa-solid fa-arrows-rotate warn';cls='warn'}
+  if(type==='vpn'){icon.className='fa-solid fa-ban vpn';cls='vpn'}
+  if(type==='error'){icon.className='fa-solid fa-circle-xmark err';cls='err'}
+  msg.textContent=text;
+  msg.className=cls;
+  box.classList.add('show');
+  btn.style.display='block';
+}
+
+// DEMO RESULT (replace with webhook logic)
+setTimeout(()=>{
+  const results=['verified','same','vpn','error'];
+  const r=results[Math.floor(Math.random()*results.length)];
+  if(r==='verified')show('verified','Verification Successful');
+  if(r==='same')show('same','Same Device Detected');
+  if(r==='vpn')show('vpn','VPN / Proxy Detected');
+  if(r==='error')show('error','Verification Failed');
+},1500);
+
+document.getElementById('closeBtn').onclick=()=>{
+  if(window.Telegram?.WebApp)Telegram.WebApp.close();
+  else window.close();
+};
+</script></body>
+</html>
