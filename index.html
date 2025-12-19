@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TXG Verify System</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:system-ui}
+body{height:100vh;background:radial-gradient(circle at top,#0b1d3a,#020409);display:flex;align-items:center;justify-content:center;color:#fff}
+.card{width:100%;max-width:380px;padding:26px;border-radius:24px;background:rgba(255,255,255,.08);backdrop-filter:blur(16px);box-shadow:0 0 40px rgba(0,180,255,.45);animation:zoom .5s ease}
+@keyframes zoom{from{transform:scale(.9);opacity:0}to{transform:scale(1);opacity:1}}
+.header{text-align:center;margin-bottom:10px}
+.header h2{font-size:24px;text-shadow:0 0 15px #00c8ff}
+.verification-area{text-align:center;margin:30px 0;min-height:160px}
+.current-emoji{font-size:80px;margin:20px 0;height:100px;display:flex;align-items:center;justify-content:center}
+.emoji-text{font-size:14px;color:#88d3ff;margin-bottom:15px;min-height:20px}
+.loading-container{margin-top:15px}
+.loading-circle{width:50px;height:50px;border:3px solid rgba(255,255,255,.1);border-top:3px solid #00ff9c;border-radius:50%;margin:0 auto;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.result{font-size:20px;text-align:center;margin-top:20px;padding:15px;border-radius:12px;display:none}
+.success{color:#00ff9c;background:rgba(0,255,156,0.1);border:1px solid rgba(0,255,156,0.3)}
+.block{color:#ff4d6d;background:rgba(255,77,109,0.1);border:1px solid rgba(255,77,109,0.3)}
+</style>
+</head>
+<body>
+<div class="card">
+ <div class="header"><h2>TXG VERIFY SYSTEM</h2></div>
+ <div class="verification-area">
+  <div class="current-emoji" id="currentEmoji"></div>
+  <div class="emoji-text" id="emojiText"></div>
+  <div class="loading-container">
+   <div class="loading-circle" id="loader"></div>
+  </div>
+ </div>
+ <div class="result success" id="ok">✔️ You are verified</div>
+ <div class="result block" id="same">✖️ Device already verified</div>
+ <div class="result block" id="vpn">🛑 VPN / Proxy detected</div>
+ <div class="result block" id="err">🛑 Verification error</div>
+</div>
+<script>
+// Get URL parameters
+const urlParams = new URLSearchParams(window.location.search);
+const webhookUrl = urlParams.get('webhookUrl');
+const botId = urlParams.get('botId');
+const userId = urlParams.get('userId');
+const refCode = urlParams.get('refCode');
+
+// Generate user hash (for tracking unique devices)
+function generateUserHash() {
+    const data = botId + '|' + 
+                 navigator.userAgent + '|' + 
+                 screen.width + 'x' + screen.height + '|' +
+                 navigator.language + '|' +
+                 new Date().getTime();
+    return btoa(data).replace(/[^a-zA-Z0-9]/g, '').substring(0, 20);
+}
+
+const USER_HASH = generateUserHash();
+const DEVICE_ID = btoa(navigator.userAgent + '|' + screen.width + 'x' + screen.height).substring(0, 32);
+
+// DOM elements
+const currentEmoji = document.getElementById('currentEmoji');
+const emojiText = document.getElementById('emojiText');
+const loader = document.getElementById('loader');
+const ok = document.getElementById('ok');
+const same = document.getElementById('same');
+const vpn = document.getElementById('vpn');
+const err = document.getElementById('err');
+
+// Emoji sequence with text
+const emojiSequence = [
+    { emoji: '🔍', text: 'Checking device...' },
+    { emoji: '📱', text: 'Analyzing system...' },
+    { emoji: '🌐', text: 'Scanning network...' },
+    { emoji: '🛡', text: 'Verifying security...' }
+];
+
+// Fast verification - no delays
+async function fastVerification() {
+    try {
+        // Start loading immediately
+        loader.style.display = 'block';
+        
+        // Show quick emoji sequence (faster)
+        for(let i = 0; i < emojiSequence.length; i++) {
+            currentEmoji.textContent = emojiSequence[i].emoji;
+            emojiText.textContent = emojiSequence[i].text;
+            await new Promise(resolve => setTimeout(resolve, 400)); // Faster: 400ms each
+        }
+        
+        // Clear after sequence
+        currentEmoji.textContent = '';
+        emojiText.textContent = '';
+        
+        // Check Telegram WebApp immediately
+        if(!window.Telegram || !Telegram.WebApp) {
+            sendFastResponse('error', 'telegram_only');
+            return;
+        }
+        
+        Telegram.WebApp.ready();
+        Telegram.WebApp.expand();
+        
+        // Fast VPN detection
+        let vpnDetected = false;
+        try {
+            // Quick VPN checks
+            if(navigator.connection?.type === 'vpn') vpnDetected = true;
+            if(navigator.hardwareConcurrency < 2) vpnDetected = true; // Some VPNs limit cores
+        } catch(e) {
+            // Skip if checks fail
+        }
+        
+        if(vpnDetected) {
+            sendFastResponse('vpn', 'vpn_detected');
+            return;
+        }
+        
+        // Send success verification
+        const success = await sendFastResponse('verified', 'captcha_ok');
+        
+        if(success) {
+            // Save to localStorage for future checks
+            const verifyData = {
+                userHash: USER_HASH,
+                deviceId: DEVICE_ID,
+                timestamp: Date.now(),
+                botId: botId
+            };
+            localStorage.setItem(`txg_${botId}_${userId}`, JSON.stringify(verifyData));
+        } else {
+            sendFastResponse('error', 'webhook_failed');
+        }
+        
+    } catch(error) {
+        console.error('Fast verification error:', error);
+        sendFastResponse('error', 'exception');
+    }
+}
+
+// Fast webhook response - optimized for speed
+async function sendFastResponse(status, captcha) {
+    if(!webhookUrl) {
+        showResult(err);
+        return false;
+    }
+    
+    try {
+        const data = {
+            results: {
+                user_hash: USER_HASH,
+                captcha: captcha,
+                vpn: status === 'vpn' ? 'yes' : 'no',
+                device_id: DEVICE_ID,
+                user_id: userId,
+                bot_id: botId,
+                ref_code: refCode || 'NONE',
+                timestamp: Date.now(),
+                user_agent: navigator.userAgent.substring(0, 50),
+                screen_res: `${screen.width}x${screen.height}`,
+                platform: navigator.platform
+            },
+            status: status,
+            fast_verify: true
+        };
+        
+        // Send with timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+        
+        const response = await fetch(decodeURIComponent(webhookUrl), {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data),
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if(response.ok) {
+            // Show appropriate result
+            switch(status) {
+                case 'verified':
+                    showResult(ok);
+                    break;
+                case 'vpn':
+                    showResult(vpn);
+                    break;
+                case 'error':
+                    showResult(err);
+                    break;
+            }
+            return true;
+        } else {
+            showResult(err);
+            return false;
+        }
+        
+    } catch(error) {
+        console.error('Fast webhook error:', error);
+        showResult(err);
+        return false;
+    }
+}
+
+// Quick result display
+function showResult(element) {
+    // Hide loading and clear emoji area
+    loader.style.display = 'none';
+    currentEmoji.textContent = '';
+    emojiText.textContent = '';
+    document.querySelector('.verification-area').style.display = 'none';
+    
+    // Show result
+    element.style.display = 'block';
+    
+    // Close WebApp after 1.5 seconds (faster!)
+    setTimeout(() => {
+        if(window.Telegram && Telegram.WebApp) {
+            Telegram.WebApp.close();
+        }
+    }, 1500);
+}
+
+// Start fast verification immediately
+document.addEventListener('DOMContentLoaded', fastVerification);
+
+// Also start on page load as backup
+window.onload = fastVerification;
+</script>
+</body>
+                                             </html>
