@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TXG Verify System</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:system-ui}
+body{height:100vh;background:radial-gradient(circle at top,#0b1d3a,#020409);display:flex;align-items:center;justify-content:center;color:#fff}
+.card{width:100%;max-width:380px;padding:26px;border-radius:24px;background:rgba(255,255,255,.08);backdrop-filter:blur(16px);box-shadow:0 0 40px rgba(0,180,255,.45);animation:zoom .5s ease}
+@keyframes zoom{from{transform:scale(.9);opacity:0}to{transform:scale(1);opacity:1}}
+.header{text-align:center;margin-bottom:10px}
+.header h2{font-size:24px;text-shadow:0 0 15px #00c8ff}
+.verification-area{text-align:center;margin:30px 0;min-height:160px}
+.current-emoji{font-size:80px;margin:20px 0;height:100px;display:flex;align-items:center;justify-content:center}
+.emoji-text{font-size:14px;color:#88d3ff;margin-bottom:15px;min-height:20px}
+.loading-container{margin-top:15px}
+.loading-circle{width:50px;height:50px;border:3px solid rgba(255,255,255,.1);border-top:3px solid #00ff9c;border-radius:50%;margin:0 auto;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.result{font-size:20px;text-align:center;margin-top:20px;padding:15px;border-radius:12px;display:none}
+.success{color:#00ff9c;background:rgba(0,255,156,0.1);border:1px solid rgba(0,255,156,0.3)}
+.block{color:#ff4d6d;background:rgba(255,77,109,0.1);border:1px solid rgba(255,77,109,0.3)}
+</style>
+</head>
+<body>
+<div class="card">
+ <div class="header"><h2>TXG VERIFY SYSTEM</h2></div>
+ <div class="verification-area">
+  <div class="current-emoji" id="currentEmoji"></div>
+  <div class="emoji-text" id="emojiText"></div>
+  <div class="loading-container">
+   <div class="loading-circle" id="loader"></div>
+  </div>
+ </div>
+ <div class="result success" id="ok">✔️ You are verified</div>
+ <div class="result block" id="same">✖️ Device already verified</div>
+ <div class="result block" id="vpn">🛑 VPN / Proxy detected</div>
+ <div class="result block" id="err">🛑 Verification error</div>
+</div>
+<script>
+// Get URL parameter safely
+function getUrlParam(name) {
+    const url = new URL(window.location.href);
+    return url.searchParams.get(name);
+}
+
+// Get Telegram WebApp data
+function getTelegramUser() {
+    try {
+        if (window.Telegram && Telegram.WebApp) {
+            const tgData = Telegram.WebApp.initDataUnsafe;
+            if (tgData && tgData.user) {
+                return tgData.user;
+            }
+        }
+        
+        // Fallback to hash parsing
+        if (window.location.hash.includes('tgWebAppData')) {
+            const hash = window.location.hash.substring(1);
+            const params = new URLSearchParams(hash);
+            const tgData = params.get('tgWebAppData');
+            if (tgData) {
+                const decoded = decodeURIComponent(tgData);
+                const tgParams = new URLSearchParams(decoded);
+                const userStr = tgParams.get('user');
+                if (userStr) {
+                    return JSON.parse(decodeURIComponent(userStr));
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Error parsing Telegram data:', e);
+    }
+    return null;
+}
+
+// Get parameters
+const webhookUrl = getUrlParam('webhookUrl');
+let botId = getUrlParam('botId');
+
+// FIXED: Validate botId - allow numbers, text+numbers, but not pure text
+function validateBotId(id) {
+    if (!id) return false;
+    
+    // Allow numeric IDs (most common for Telegram bots)
+    if (/^\d+$/.test(id)) return true;
+    
+    // Allow alphanumeric with numbers (like "bot123456")
+    if (/^[a-zA-Z0-9]+$/.test(id) && /\d/.test(id)) return true;
+    
+    // Allow bot IDs with underscores/hyphens if they contain numbers
+    if (/^[a-zA-Z0-9_-]+$/.test(id) && /\d/.test(id)) return true;
+    
+    // Block pure text without numbers
+    if (/^[a-zA-Z]+$/.test(id)) {
+        console.error('Invalid botId: Pure text not allowed');
+        return false;
+    }
+    
+    return true;
+}
+
+// Validate botId
+if (!validateBotId(botId)) {
+    // Show error immediately
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('err').textContent = '🛑 Invalid Bot ID';
+        document.getElementById('err').style.display = 'block';
+        document.querySelector('.verification-area').style.display = 'none';
+    });
+    throw new Error('Invalid botId format');
+}
+
+// Normalize botId - ensure it's a string
+botId = String(botId).trim();
+
+// Get Telegram user
+const tgUser = getTelegramUser();
+const userId = tgUser ? tgUser.id : 'unknown';
+const firstName = tgUser ? tgUser.first_name : 'User';
+
+// Generate device hash
+function generateDeviceHash() {
+    const components = [
+        botId,
+        navigator.userAgent.substring(0, 50),
+        `${screen.width}x${screen.height}`,
+        navigator.language || 'en',
+        new Date().getTime().toString()
+    ];
+    
+    // Create a stable hash
+    const str = components.join('|');
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+    }
+    return Math.abs(hash).toString(36) + Date.now().toString(36).slice(-8);
+}
+
+const DEVICE_HASH = generateDeviceHash();
+const STORAGE_KEY = `txg_v_${botId}_${userId}`;
+
+// DOM elements
+const currentEmoji = document.getElementById('currentEmoji');
+const emojiText = document.getElementById('emojiText');
+const loader = document.getElementById('loader');
+const ok = document.getElementById('ok');
+const same = document.getElementById('same');
+const vpn = document.getElementById('vpn');
+const err = document.getElementById('err');
+
+// Emoji sequence
+const emojiSequence = [
+    { emoji: '🔍', text: 'Checking device...' },
+    { emoji: '📱', text: 'Analyzing system...' },
+    { emoji: '🌐', text: 'Scanning network...' },
+    { emoji: '🛡', text: 'Verifying security...' }
+];
+
+// Main verification
+async function startVerification() {
+    try {
+        console.log('Starting verification - botId:', botId);
+        
+        // Show loading
+        loader.style.display = 'block';
+        
+        // Show emoji sequence
+        for(let i = 0; i < emojiSequence.length; i++) {
+            currentEmoji.textContent = emojiSequence[i].emoji;
+            emojiText.textContent = emojiSequence[i].text;
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
+        // Clear display
+        currentEmoji.textContent = '';
+        emojiText.textContent = '';
+        
+        // Check Telegram WebApp
+        if (!window.Telegram || !Telegram.WebApp) {
+            console.warn('Not in Telegram WebApp, but continuing...');
+        } else {
+            Telegram.WebApp.ready();
+            Telegram.WebApp.expand();
+        }
+        
+        // Check VPN
+        let vpnDetected = false;
+        try {
+            if (navigator.connection && navigator.connection.type === 'vpn') {
+                vpnDetected = true;
+            }
+            
+            // Check for common VPN/proxy indicators
+            const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            const suspiciousTimezones = ['UTC', 'GMT'];
+            if (suspiciousTimezones.includes(timezone)) {
+                vpnDetected = true;
+            }
+        } catch (e) {
+            console.warn('VPN check error:', e);
+        }
+        
+        if (vpnDetected) {
+            await sendVerification('vpn');
+            showResult(vpn);
+            return;
+        }
+        
+        // Check previous verification
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+            try {
+                const data = JSON.parse(stored);
+                if (data.deviceHash === DEVICE_HASH) {
+                    await sendVerification('already_verified');
+                    showResult(same);
+                    return;
+                }
+            } catch (e) {
+                // Invalid storage data, continue
+            }
+        }
+        
+        // Save new verification
+        const verifyData = {
+            deviceHash: DEVICE_HASH,
+            verifiedAt: new Date().toISOString(),
+            botId: botId,
+            userId: userId,
+            userAgent: navigator.userAgent.substring(0, 100)
+        };
+        
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(verifyData));
+        
+        // Send to webhook
+        const success = await sendVerification('verified');
+        
+        if (success) {
+            showResult(ok);
+        } else {
+            showResult(err);
+        }
+        
+    } catch (error) {
+        console.error('Verification error:', error);
+        showResult(err);
+    }
+}
+
+// Send verification result
+async function sendVerification(status) {
+    if (!webhookUrl) {
+        console.log('No webhook URL, verification complete locally');
+        return true;
+    }
+    
+    try {
+        const data = {
+            results: {
+                user_hash: DEVICE_HASH,
+                captcha: status === 'verified' ? 'captcha_ok' : 'failed',
+                vpn: status === 'vpn' ? 'yes' : 'no',
+                device_id: DEVICE_HASH,
+                user_id: userId,
+                bot_id: botId,
+                first_name: firstName,
+                timestamp: Date.now(),
+                status: status
+            }
+        };
+        
+        console.log('Sending verification:', data);
+        
+        const response = await fetch(decodeURIComponent(webhookUrl), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        
+        return response.ok;
+        
+    } catch (error) {
+        console.error('Webhook error:', error);
+        return false;
+    }
+}
+
+// Show result
+function showResult(element) {
+    loader.style.display = 'none';
+    document.querySelector('.verification-area').style.display = 'none';
+    element.style.display = 'block';
+    
+    // Auto-close in Telegram
+    setTimeout(() => {
+        if (window.Telegram && Telegram.WebApp) {
+            Telegram.WebApp.close();
+        }
+    }, 2000);
+}
+
+// Start verification
+document.addEventListener('DOMContentLoaded', startVerification);
+
+// Debug info
+console.log('TXG Verify System started');
+console.log('botId:', botId, 'Type:', typeof botId);
+console.log('Valid botId?', validateBotId(botId));
+</script>
+</body>
+    </html>
